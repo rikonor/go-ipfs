@@ -1,11 +1,13 @@
 package dht
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	key "github.com/ipfs/go-ipfs/blocks/key"
 	peer "gx/ipfs/QmQGwpJy9P4yXZySmqkZEXCmbBpJUb8xntCv8Ca4taZwDC/go-libp2p-peer"
+	ds "gx/ipfs/QmZ6A6P6AMo8SR3jXAwzTuSU6B9R2Y4eqW2yW9VvfUayDN/go-datastore"
 
 	context "gx/ipfs/QmZy2y8t9zQH2a1b8q2ZSLKp17ATuJoCNxxyMFG5qFExpt/go-net/context"
 )
@@ -13,7 +15,7 @@ import (
 func TestProviderManager(t *testing.T) {
 	ctx := context.Background()
 	mid := peer.ID("testing")
-	p := NewProviderManager(ctx, mid)
+	p := NewProviderManager(ctx, mid, ds.NewMapDatastore())
 	a := key.Key("test")
 	p.AddProvider(ctx, a, peer.ID("testingprovider"))
 	resp := p.GetProviders(ctx, a)
@@ -23,13 +25,48 @@ func TestProviderManager(t *testing.T) {
 	p.proc.Close()
 }
 
-func TestProvidesExpire(t *testing.T) {
-	ProvideValidity = time.Second
-	defaultCleanupInterval = time.Second
+func TestProvidersDatastore(t *testing.T) {
+	old := lruCacheSize
+	lruCacheSize = 10
+	defer func() { lruCacheSize = old }()
 
 	ctx := context.Background()
 	mid := peer.ID("testing")
-	p := NewProviderManager(ctx, mid)
+	p := NewProviderManager(ctx, mid, ds.NewMapDatastore())
+
+	friend := peer.ID("friend")
+	var keys []key.Key
+	for i := 0; i < 100; i++ {
+		k := key.Key(fmt.Sprint(i))
+		keys = append(keys, k)
+		p.AddProvider(ctx, k, friend)
+	}
+
+	for _, k := range keys {
+		resp := p.GetProviders(ctx, k)
+		if len(resp) != 1 {
+			t.Fatal("Could not retrieve provider.")
+		}
+		if resp[0] != friend {
+			t.Fatal("expected provider to be 'friend'")
+		}
+	}
+	p.proc.Close()
+}
+
+func TestProvidesExpire(t *testing.T) {
+	pval := ProvideValidity
+	cleanup := defaultCleanupInterval
+	ProvideValidity = time.Second / 2
+	defaultCleanupInterval = time.Second / 2
+	defer func() {
+		ProvideValidity = pval
+		defaultCleanupInterval = cleanup
+	}()
+
+	ctx := context.Background()
+	mid := peer.ID("testing")
+	p := NewProviderManager(ctx, mid, ds.NewMapDatastore())
 
 	peers := []peer.ID{"a", "b"}
 	var keys []key.Key
@@ -47,7 +84,7 @@ func TestProvidesExpire(t *testing.T) {
 		}
 	}
 
-	time.Sleep(time.Second * 3)
+	time.Sleep(time.Second)
 	for i := 0; i < 10; i++ {
 		out := p.GetProviders(ctx, keys[i])
 		if len(out) > 2 {
@@ -55,7 +92,16 @@ func TestProvidesExpire(t *testing.T) {
 		}
 	}
 
-	if len(p.providers) != 0 {
+	if p.providers.Len() != 0 {
 		t.Fatal("providers map not cleaned up")
+	}
+
+	allprovs, err := p.getAllProvKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(allprovs) != 0 {
+		t.Fatal("expected everything to be cleaned out of the datastore")
 	}
 }

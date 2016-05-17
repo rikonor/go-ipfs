@@ -84,7 +84,7 @@ func NewDHT(ctx context.Context, h host.Host, dstore ds.Datastore) *IpfsDHT {
 	dht.ctx = ctx
 
 	h.SetStreamHandler(ProtocolDHT, dht.handleNewStream)
-	dht.providers = NewProviderManager(dht.ctx, dht.self)
+	dht.providers = NewProviderManager(dht.ctx, dht.self, dstore)
 	dht.proc.AddChild(dht.providers.proc)
 	goprocessctx.CloseAfterContext(dht.proc, ctx)
 
